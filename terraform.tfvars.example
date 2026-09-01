@@ -1,0 +1,82 @@
+# ==============================================================================
+#  azure-managed-identity — terraform.tfvars
+# ==============================================================================
+#  Copy this file to `terraform.tfvars`, set the values, then run:
+#      tofu init && tofu apply        (or:  terraform init && terraform apply)
+#
+# AUTHENTICATION — Azure:
+#   The azurerm provider authenticates to Microsoft Entra ID (Azure AD) and
+#   resolves credentials in this order: explicit OIDC, then client certificate,
+#   then client secret, then Managed Identity, then Azure CLI.
+#   Quick start: az login (then `az account set --subscription <id>`; `az
+#   login --use-device-code` for headless, `az login --service-principal -u
+#   <appId> -p <secret> --tenant <tenant>` for SP).
+#   Environment variables Terraform reads:
+#     ARM_SUBSCRIPTION_ID — Target subscription GUID; required for plan/apply in provider v4.x.
+#     ARM_TENANT_ID — Entra ID (Azure AD) tenant GUID.
+#     ARM_CLIENT_ID — App registration / service principal (or user-assigned MSI) client id.
+#     ARM_CLIENT_SECRET  (secret) — Service principal client secret (secret-based auth).
+#     ARM_CLIENT_CERTIFICATE_PATH — Path to the PKCS#12 (.pfx) client certificate.
+#   Full guide (auth + remote state):  docs/CONNECTING-PROVIDERS.md#azure
+#
+#  This module creates no secrets of its own. Never commit real credentials —
+#  prefer TF_VAR_<name> environment variables or a secrets manager.
+#  Status: static-validated, live-test pending (see README.md).
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+#  REQUIRED — you must set these
+# ------------------------------------------------------------------------------
+
+# resource_group_name  —  string  (REQUIRED)
+#   Name of an existing resource group that will hold the identities.
+resource_group_name = "rg-app-prod"
+
+# location  —  string  (REQUIRED)
+#   Azure region for the managed identities.
+location            = "westeurope"
+
+# identities  —  map(object)  (REQUIRED, at least one)
+#   User-assigned managed identities keyed by name (3-128 chars: start with a
+#   letter or digit, then letters, digits, hyphens or underscores). Each entry
+#   may declare federated_credentials (OIDC trust), role_assignments (RBAC) and
+#   per-identity tags. The example below shows all three; the minimal form is
+#   just `{ "my-identity" = {} }`.
+identities = {
+  # Runtime identity for an app, scoped to read its own resource group.
+  "id-app-runtime" = {
+    role_assignments = {
+      "reader-on-rg" = {
+        # Pick the narrowest scope that works (resource < RG < subscription).
+        scope                = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app-prod"
+        role_definition_name = "Reader"
+        # Or pin a definition by id instead of name (set exactly one):
+        # role_definition_id = "/subscriptions/.../providers/Microsoft.Authorization/roleDefinitions/..."
+      }
+    }
+  }
+
+  # CI/CD identity GitHub Actions can assume via OIDC — no stored secret.
+  "id-github-deployer" = {
+    federated_credentials = {
+      "github-main" = {
+        issuer  = "https://token.actions.githubusercontent.com"
+        subject = "repo:octo-org/octo-repo:ref:refs/heads/main"
+        # audience defaults to ["api://AzureADTokenExchange"]; override only if needed:
+        # audience = ["api://AzureADTokenExchange"]
+      }
+    }
+  }
+}
+
+# ------------------------------------------------------------------------------
+#  OPTIONAL — defaults shown; uncomment a line to override
+# ------------------------------------------------------------------------------
+
+# tags  —  map(string)  (optional, default: {})
+#   Tags applied to every identity (per-identity tags override these on conflict).
+tags = {
+  environment = "example"
+  managed_by  = "iac-bazaar"
+}
